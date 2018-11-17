@@ -32,6 +32,7 @@ import java.util.Map;
 
 import org.apache.avro.Schema;
 import org.apache.avro.generic.GenericData;
+import org.apache.avro.reflect.ReflectData;
 import org.apache.hadoop.hive.serde2.SerDeException;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.StandardListObjectInspector;
@@ -44,7 +45,7 @@ import org.apache.hadoop.hive.serde2.objectinspector.primitive.VoidObjectInspect
 import org.junit.Test;
 
 public class TestAvroDeserializer {
-  private final GenericData GENERIC_DATA = GenericData.get();
+  private final GenericData GENERIC_DATA = ReflectData.AllowNull.get();
 
   @Test
   public void canDeserializeVoidType() throws IOException, SerDeException {
@@ -125,6 +126,27 @@ public class TestAvroDeserializer {
     assertEquals(1l, theMap2.get("one"));
     assertEquals(2l, theMap2.get("two"));
     assertEquals(3l, theMap2.get("three"));
+  }
+
+  @Test
+  public void canDeserializeParamTypes() {
+    Schema rootSchema = new Schema.Parser().parse(
+      "[\"null\",{\"type\":\"param\",\"values\":{\"type\":\"record\",\"name\":\"PairMetricTypeLong\",\"namespace\":\"com.test.models.commons\",\"fields\":[{\"name\":\"key\",\"type\":{\"type\":\"enum\",\"name\":\"MetricType\",\"symbols\":[\"ABSOLUTE\",\"PERCENTAGE\",\"RELATIVE\"]}},{\"name\":\"value\",\"type\":\"long\"}],\"java-class\":\"com.test.models.commons.Pair\"}}]");
+
+    Schema rootParamSchema = new Schema.Parser().parse(
+      "{\"type\":\"param\",\"values\":{\"type\":\"record\",\"name\":\"PairMetricTypeLong\",\"namespace\":\"com.test.models.commons\",\"fields\":[{\"name\":\"key\",\"type\":{\"type\":\"enum\",\"name\":\"MetricType\",\"symbols\":[\"ABSOLUTE\",\"PERCENTAGE\",\"RELATIVE\"]}},{\"name\":\"value\",\"type\":\"long\"}],\"java-class\":\"com.test.models.commons.Pair\"}}");
+
+    Schema schema = new Schema.Parser().parse(
+      "{\"type\":\"record\",\"name\":\"PairMetricTypeLong\",\"namespace\":\"com.test.models.commons\",\"fields\":[{\"name\":\"key\",\"type\":{\"type\":\"enum\",\"name\":\"MetricType\",\"symbols\":[\"ABSOLUTE\",\"PERCENTAGE\",\"RELATIVE\"]}},{\"name\":\"value\",\"type\":\"long\"}],\"java-class\":\"com.test.models.commons.Pair\"}");
+    GenericData.Record record = new GenericData.Record(schema);
+
+    Schema enumSchema = new Schema.Parser().parse(
+      "{\"type\":\"enum\",\"name\":\"MetricType\",\"symbols\":[\"ABSOLUTE\",\"PERCENTAGE\",\"RELATIVE\"]}}");
+    record.put("key", new GenericData.EnumSymbol(enumSchema, "ABSOLUTE"));
+    record.put("value", 135L);
+
+    GenericData.Param param = new GenericData.Param(rootParamSchema, record);
+    assertEquals(1, GENERIC_DATA.resolveUnion(rootSchema, param));
   }
 
   @Test
@@ -234,6 +256,37 @@ public class TestAvroDeserializer {
   public void canDeserializeRecords() throws SerDeException, IOException {
     Schema s = AvroSerdeUtils.getSchemaFor(TestAvroObjectInspectorGenerator.RECORD_SCHEMA);
     canDeserializeRecordsInternal(s, s);
+  }
+
+  @Test
+  public void canDeserializeRecursiveRecords() throws SerDeException, IOException {
+    Schema schema = AvroSerdeUtils.getSchemaFor(TestAvroObjectInspectorGenerator.RECURSIVE_RECORD_SCHEMA);
+
+    GenericData.Record recRecord1 = new GenericData.Record(schema);
+    recRecord1.put("child", null);
+    recRecord1.put("brand", "brand_Rec1");
+
+    GenericData.Record recRecord2 = new GenericData.Record(schema);
+    recRecord2.put("child", recRecord1);
+    recRecord2.put("brand", "brand_Rec2");
+
+    GenericData.Record record = new GenericData.Record(schema);
+    record.put("child", recRecord2);
+    record.put("brand", "brand_root");
+
+    assertTrue(GENERIC_DATA.validate(schema, record));
+
+    AvroGenericRecordWritable garw = Utils.serializeAndDeserializeRecord(record, schema);
+    //canDeserializeRecordsInternal(schema, schema);
+
+    AvroObjectInspectorGenerator aoig = new AvroObjectInspectorGenerator(schema);
+
+    AvroDeserializer de = new AvroDeserializer();
+    ArrayList<Object> row =
+            (ArrayList<Object>)de.deserialize(aoig.getColumnNames(), aoig.getColumnTypes(), garw, schema);
+    assertEquals(2, row.size());
+    Object theRecordObject = row.get(0);
+    System.out.println("theRecordObject = " + theRecordObject.getClass().getCanonicalName());
   }
 
   @Test

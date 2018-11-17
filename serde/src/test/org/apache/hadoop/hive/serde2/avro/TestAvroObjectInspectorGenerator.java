@@ -100,6 +100,20 @@ public class TestAvroObjectInspectorGenerator {
       "    }\n" +
       "  ]\n" +
       "}";
+  public static final String RECURSIVE_RECORD_SCHEMA = "{\n"
+        + "  \"type\" : \"record\",\n"
+        + "  \"name\" : \"Cycle\",\n"
+        + "  \"namespace\" : \"org.apache.hadoop.hive.serde2.avro\",\n"
+        + "  \"fields\" : [ {\n"
+        + "    \"name\" : \"child\",\n"
+        + "    \"type\" : [ \"null\", \"Cycle\"],\n"
+        + "    \"default\" : null\n"
+        + "  }, {\n"
+        + "    \"name\" : \"brand\",\n"
+        + "    \"type\" : [ \"null\", \"string\"],\n"
+        + "    \"default\" : null\n"
+        + "  } ]\n"
+        + "}";
   public static final String NULLABLE_RECORD_SCHEMA = "[\"null\", " + RECORD_SCHEMA + "]";
   public static final String UNION_SCHEMA = "{\n" +
       "  \"namespace\": \"test.a.rossa\",\n" +

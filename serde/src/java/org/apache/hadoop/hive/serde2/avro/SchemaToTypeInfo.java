@@ -36,9 +36,7 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.avro.Schema;
-import org.apache.hadoop.hive.serde2.typeinfo.HiveDecimalUtils;
-import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
-import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
+import org.apache.hadoop.hive.serde2.typeinfo.*;
 
 /**
  * Convert an Avro Schema to a Hive TypeInfo
@@ -206,33 +204,72 @@ class SchemaToTypeInfo {
       case ARRAY:  return generateArrayTypeInfo(schema, seenSchemas);
       case UNION:  return generateUnionTypeInfo(schema, seenSchemas);
       case ENUM:   return generateEnumTypeInfo(schema);
+      case PARAM:  return generateParamTypeInfo(schema, seenSchemas);
       default:     throw new AvroSerdeException("Do not yet support: " + schema);
     }
+  }
+
+  private static TypeInfo generateParamTypeInfo(Schema schema, Set<Schema> seenSchemas)
+      throws AvroSerdeException {
+    assert schema.getType().equals(Schema.Type.PARAM);
+    return generateRecordTypeInfo(schema.getValueType(), seenSchemas);
   }
 
   private static TypeInfo generateRecordTypeInfo(Schema schema,
       Set<Schema> seenSchemas) throws AvroSerdeException {
     assert schema.getType().equals(Schema.Type.RECORD);
-
     if (seenSchemas == null) {
         seenSchemas = Collections.newSetFromMap(new IdentityHashMap<Schema, Boolean>());
-    } else if (seenSchemas.contains(schema)) {
-      throw new AvroSerdeException(
-          "Recursive schemas are not supported. Recursive schema was " + schema
-              .getFullName());
+    } else if (seenSchemas.contains(schema)) {// && !typeInfoCache.contains(schema)) {
+//      throw new AvroSerdeException(
+//          "Recursive schemas are not supported. Recursive schema was " + schema
+//              .getFullName());
+      return getTypeInfo(schema, seenSchemas);
     }
     seenSchemas.add(schema);
+    return getTypeInfo(schema, seenSchemas);
+  }
 
+  private static TypeInfo getTypeInfo(Schema schema, Set<Schema> seenSchemas)
+      throws AvroSerdeException {
     List<Schema.Field> fields = schema.getFields();
     List<String> fieldNames = new ArrayList<String>(fields.size());
     List<TypeInfo> typeInfos = new ArrayList<TypeInfo>(fields.size());
+    List<Schema.Field> recursiveFields = new ArrayList<>();
+    int k=0;
 
     for(int i = 0; i < fields.size(); i++) {
-      fieldNames.add(i, fields.get(i).name());
-      typeInfos.add(i, generateTypeInfo(fields.get(i).schema(), seenSchemas));
+      Schema.Field field = fields.get(i);
+      Schema fieldSchema = field.schema();
+
+      if(AvroSerdeUtils.isNullableType(fieldSchema) &&
+          schema.equals(AvroSerdeUtils.getOtherTypeFromNullableType(fieldSchema))) {
+          recursiveFields.add(field);
+      } else {
+        fieldNames.add(k, field.name());
+        TypeInfo typeInfo = generateTypeInfo(fieldSchema, seenSchemas);
+        typeInfos.add(k, typeInfo);
+        k++;
+      }
     }
 
-    return TypeInfoFactory.getStructTypeInfo(fieldNames, typeInfos);
+    StructTypeInfo structTypeInfo = (StructTypeInfo) TypeInfoFactory.
+        getStructTypeInfo(fieldNames, typeInfos);
+
+    if(recursiveFields.size() > 0) {
+      ArrayList<String> allStructFieldNames = structTypeInfo.getAllStructFieldNames();
+      ArrayList<TypeInfo> allStructFieldTypeInfos = structTypeInfo.getAllStructFieldTypeInfos();
+
+      for (Schema.Field field : recursiveFields) {
+        allStructFieldNames.add(field.name());
+        allStructFieldTypeInfos.add(structTypeInfo);
+      }
+
+      structTypeInfo.setAllStructFieldNames(allStructFieldNames);
+      structTypeInfo.setAllStructFieldTypeInfos(allStructFieldTypeInfos);
+      structTypeInfo.setRecursiveTypeName(schema.getFullName());
+    }
+    return structTypeInfo;
   }
 
   /**
@@ -261,15 +298,46 @@ class SchemaToTypeInfo {
       Set<Schema> seenSchemas) throws AvroSerdeException {
     assert schema.getType().equals(Schema.Type.UNION);
     List<Schema> types = schema.getTypes();
-
-
+    //List<TypeInfo> typeInfos = new ArrayList<TypeInfo>(types.size());
     List<TypeInfo> typeInfos = new ArrayList<TypeInfo>(types.size());
+    List<Schema> recursiveType = new ArrayList<>();
 
     for(Schema type : types) {
-      typeInfos.add(generateTypeInfo(type, seenSchemas));
+      if(seenSchemas != null && seenSchemas.contains(type)) {
+        recursiveType.add(type);
+      } else {
+        typeInfos.add(generateTypeInfo(type, seenSchemas));
+      }
     }
 
-    return TypeInfoFactory.getUnionTypeInfo(typeInfos);
+    UnionTypeInfo unionTypeInfo = (UnionTypeInfo) TypeInfoFactory.getUnionTypeInfo(typeInfos);
+
+    if(recursiveType.size() > 0) {
+      List<TypeInfo> allUnionObjectTypeInfos = unionTypeInfo.getAllUnionObjectTypeInfos();
+
+      ArrayList<TypeInfo> newTypeInfos = new ArrayList<>(allUnionObjectTypeInfos);
+      for(Schema type: recursiveType) {
+        newTypeInfos.add(unionTypeInfo);
+      }
+
+      UnionTypeInfo unionTypeInfo2 = (UnionTypeInfo) TypeInfoFactory.getUnionTypeInfo(newTypeInfos);
+
+      //this is required as we want to set the fully constructed recursive schema as schema for the
+      // recursive subtype.
+      // TODO: Need to work on an elegant solution for this
+      ArrayList<TypeInfo> newTypeInfos2 = new ArrayList<>(newTypeInfos);
+      for(TypeInfo typeInfo: newTypeInfos) {
+        if(typeInfo.equals(unionTypeInfo)) {
+          newTypeInfos2.add(unionTypeInfo2);
+        } else {
+          newTypeInfos2.add(typeInfo);
+        }
+      }
+
+      return TypeInfoFactory.getUnionTypeInfo(newTypeInfos2);
+    }
+
+    return unionTypeInfo;
   }
 
   // Hive doesn't have an Enum type, so we're going to treat them as Strings.

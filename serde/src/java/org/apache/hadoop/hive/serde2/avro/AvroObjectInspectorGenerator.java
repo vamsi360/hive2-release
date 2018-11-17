@@ -25,6 +25,7 @@ import org.apache.hadoop.hive.serde2.SerDeException;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory;
 import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
+import org.apache.hadoop.hive.serde2.objectinspector.StandardStructObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
 import org.apache.hadoop.hive.serde2.typeinfo.ListTypeInfo;
 import org.apache.hadoop.hive.serde2.typeinfo.MapTypeInfo;
@@ -99,14 +100,49 @@ public class AvroObjectInspectorGenerator {
         break;
       case STRUCT:
         StructTypeInfo sti = (StructTypeInfo)ti;
-        ArrayList<ObjectInspector> ois = new ArrayList<ObjectInspector>(sti.getAllStructFieldTypeInfos().size());
-        for(TypeInfo typeInfo : sti.getAllStructFieldTypeInfos()) {
-          ois.add(createObjectInspectorWorker(typeInfo));
+        ArrayList<ObjectInspector> ois = new ArrayList<>();
+
+        ArrayList<TypeInfo> allStructFieldTypeInfos = sti.getAllStructFieldTypeInfos();
+        ArrayList<String> allStructFieldNames = sti.getAllStructFieldNames();
+
+        ArrayList<String> structFieldNames = new ArrayList<>();
+        ArrayList<String> recursiveFieldNames = new ArrayList<>();
+        for (int i = 0; i < allStructFieldTypeInfos.size(); i++) {
+          TypeInfo typeInfo = allStructFieldTypeInfos.get(i);
+          if (typeInfo.equals(ti)) {
+            recursiveFieldNames.add(allStructFieldNames.get(i));
+          } else {
+            ois.add(createObjectInspectorWorker(typeInfo));
+            structFieldNames.add(allStructFieldNames.get(i));
+          }
+        }
+
+        //doing it 2nd time to capture the recursive fields separately
+        StandardStructObjectInspector inspector = ObjectInspectorFactory
+            .getStandardStructObjectInspector(structFieldNames, ois);
+
+        ArrayList<String> newFieldNames = new ArrayList<>(structFieldNames);
+        ArrayList<ObjectInspector> newInspectors = new ArrayList<>(ois);
+
+        for(String fieldName: recursiveFieldNames) {
+          newFieldNames.add(fieldName);
+          newInspectors.add(inspector);
+        }
+
+        //doing it 3rd time to capture the recursive schema from 2nd time
+        StandardStructObjectInspector newInspector = ObjectInspectorFactory
+            .getStandardStructObjectInspector(newFieldNames, newInspectors);
+
+        ArrayList<String> newFieldNames2 = new ArrayList<>(structFieldNames);
+        ArrayList<ObjectInspector> newInspectors2 = new ArrayList<>(ois);
+
+        for(String fieldName: recursiveFieldNames) {
+          newFieldNames2.add(fieldName);
+          newInspectors2.add(newInspector);
         }
 
         result = ObjectInspectorFactory
-                .getStandardStructObjectInspector(sti.getAllStructFieldNames(), ois);
-
+            .getStandardStructObjectInspector(newFieldNames2, newInspectors2);
         break;
       case MAP:
         MapTypeInfo mti = (MapTypeInfo)ti;

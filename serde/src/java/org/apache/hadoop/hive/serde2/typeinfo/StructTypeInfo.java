@@ -40,6 +40,7 @@ public final class StructTypeInfo extends TypeInfo implements Serializable {
 
   private ArrayList<String> allStructFieldNames;
   private ArrayList<TypeInfo> allStructFieldTypeInfos;
+  private String recursiveTypeName;
 
   /**
    * For java serialization use only.
@@ -47,8 +48,15 @@ public final class StructTypeInfo extends TypeInfo implements Serializable {
   public StructTypeInfo() {
   }
 
+  public void setRecursiveTypeName(String recursiveTypeName) {
+    this.recursiveTypeName = recursiveTypeName;
+  }
+
   @Override
   public String getTypeName() {
+    if(recursiveTypeName != null) {
+      return recursiveTypeName;
+    }
     StringBuilder sb = new StringBuilder();
     sb.append(serdeConstants.STRUCT_TYPE_NAME + "<");
     for (int i = 0; i < allStructFieldNames.size(); i++) {

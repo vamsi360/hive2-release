@@ -32,6 +32,7 @@ import org.apache.avro.generic.GenericArray;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericData.Fixed;
 import org.apache.avro.generic.GenericEnumSymbol;
+import org.apache.avro.reflect.ReflectData;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.hive.common.type.HiveChar;
@@ -96,7 +97,7 @@ class AvroSerializer {
       record.put(field.name(), val);
     }
 
-    if(!GenericData.get().validate(schema, record)) {
+    if(!ReflectData.get().validate(schema, record)) {
       throw new SerializeToAvroException(schema, record);
     }
 
